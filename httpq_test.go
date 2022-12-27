@@ -54,7 +54,7 @@ func TestPublishFail(t *testing.T) {
 }
 
 func TestConsume(t *testing.T) {
-	h := &HTTPQ{queue: map[string][]string{"/test-topic": {"Hello"}}}
+	h := &HTTPQ{queue: map[string]chan []string{"/test-topic": {make(chan []string{"hello"})}}}
 
 	req, err := http.NewRequest("GET", "/test-topic", nil)
 

@@ -4,28 +4,27 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sync"
 
 	"github.com/go-chi/chi"
 )
 
 type HTTPQ struct {
-	RxBytes  int                 // number of bytes (message body) consumed
-	TxBytes  int                 // number of bytes (message body) published
-	PubFails int                 // number of publish failures
-	SubFails int                 // number of subscribe failures
-	queue    map[string][]string // message queue
-}
-
-func (h *HTTPQ) Pop(key string) ([]string, bool) {
-	if h.queue == nil {
-		h.queue = make(map[string][]string)
-	}
-	val, ok := h.queue[key]
-	return val, ok
+	RxBytes  int                      // number of bytes (message body) consumed
+	TxBytes  int                      // number of bytes (message body) published
+	PubFails int                      // number of publish failures
+	SubFails int                      // number of subscribe failures
+	queue    map[string]chan []string // message queue
+	mux      sync.Mutex
+	cond     *sync.Cond
 }
 
 func (h *HTTPQ) Handler() http.Handler {
 	r := chi.NewRouter()
+
+	if h.cond == nil {
+		h.cond = sync.NewCond(&h.mux)
+	}
 
 	r.Get("/{topic}", h.Consume().ServeHTTP)
 	r.Post("/{topic}", h.Publish().ServeHTTP)
@@ -37,7 +36,7 @@ func (h *HTTPQ) Handler() http.Handler {
 func (h *HTTPQ) Publish() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if h.queue == nil {
-			h.queue = make(map[string][]string)
+			h.queue = make(map[string]chan []string)
 		}
 
 		if r.ContentLength == 0 {
@@ -61,8 +60,16 @@ func (h *HTTPQ) Publish() http.Handler {
 
 		topic := r.URL.Path
 
-		h.queue[topic] = append(h.queue[topic], string(msg))
+		if _, ok := h.queue[topic]; !ok {
+			h.queue[topic] = make(chan []string, 1)
+		}
+
+		h.queue[topic] <- []string{string(msg)}
 		h.TxBytes += len([]byte(msg))
+
+		h.mux.Lock()
+		h.cond.Signal()
+		h.mux.Unlock()
 
 		w.WriteHeader(201)
 	})
@@ -72,6 +79,10 @@ func (h *HTTPQ) Consume() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		topic := r.URL.Path
 
+		h.mux.Lock()
+		h.cond.Wait()
+		h.mux.Unlock()
+
 		val, ok := h.queue[topic]
 
 		if !ok || len(val) <= 0 {
@@ -80,11 +91,11 @@ func (h *HTTPQ) Consume() http.Handler {
 			return
 		}
 
-		msg := val[0]
-		h.queue[topic] = val[1:]
-		h.RxBytes += len([]byte(msg))
+		msg := <-h.queue[topic]
 
-		w.Write([]byte(msg))
+		h.RxBytes += len([]byte(msg[0]))
+
+		w.Write([]byte(msg[0]))
 	})
 }
 
