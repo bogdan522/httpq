@@ -16,6 +16,14 @@ type HTTPQ struct {
 	queue    map[string][]string // message queue
 }
 
+func (h *HTTPQ) Pop(key string) ([]string, bool) {
+	if h.queue == nil {
+		h.queue = make(map[string][]string)
+	}
+	val, ok := h.queue[key]
+	return val, ok
+}
+
 func (h *HTTPQ) Handler() http.Handler {
 	r := chi.NewRouter()
 
@@ -39,6 +47,11 @@ func (h *HTTPQ) Publish() http.Handler {
 		}
 
 		msg, err := io.ReadAll(r.Body)
+		if len(msg) <= 0 {
+			h.PubFails++
+			w.WriteHeader(400)
+			return
+		}
 
 		if err != nil {
 			h.PubFails++
@@ -48,19 +61,10 @@ func (h *HTTPQ) Publish() http.Handler {
 
 		topic := r.URL.Path
 
-		val, ok := h.queue[topic]
-
-		if ok {
-			val = append(val, string(msg))
-			h.queue[topic] = val
-		} else {
-			h.queue[topic] = append(make([]string, 0), string(msg))
-		}
-
+		h.queue[topic] = append(h.queue[topic], string(msg))
 		h.TxBytes += len([]byte(msg))
-		w.Write(msg)
-		w.WriteHeader(200)
 
+		w.WriteHeader(201)
 	})
 }
 
@@ -73,7 +77,6 @@ func (h *HTTPQ) Consume() http.Handler {
 		if !ok || len(val) <= 0 {
 			h.SubFails++
 			w.WriteHeader(400)
-			w.Write([]byte("Array empty"))
 			return
 		}
 
@@ -82,8 +85,6 @@ func (h *HTTPQ) Consume() http.Handler {
 		h.RxBytes += len([]byte(msg))
 
 		w.Write([]byte(msg))
-		w.WriteHeader(200)
-
 	})
 }
 
