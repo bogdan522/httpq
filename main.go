@@ -1,8 +1,18 @@
 package main
 
-import "net/http"
+import (
+	"fmt"
+	"log"
+	"net/http"
+
+	"github.com/gorilla/mux"
+)
 
 func main() {
-	httpQ := &HTTPQ{}
-	http.ListenAndServeTLS(":24744", "localhost.crt", "localhost.key", httpQ.Handler())
+	r := mux.NewRouter()
+	fmt.Println("Hello World")
+	//h := &HTTPQ{}
+	setupRoutes(r)
+	http.Handle("/", r)
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
