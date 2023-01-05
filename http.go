@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"sync"
 
 	"github.com/go-chi/chi"
 )
@@ -15,16 +14,10 @@ type HTTPQ struct {
 	PubFails int                      // number of publish failures
 	SubFails int                      // number of subscribe failures
 	queue    map[string]chan []string // message queue
-	mux      sync.Mutex
-	cond     *sync.Cond
 }
 
 func (h *HTTPQ) Handler() http.Handler {
 	r := chi.NewRouter()
-
-	if h.cond == nil {
-		h.cond = sync.NewCond(&h.mux)
-	}
 
 	r.Get("/{topic}", h.Consume().ServeHTTP)
 	r.Post("/{topic}", h.Publish().ServeHTTP)
@@ -67,10 +60,6 @@ func (h *HTTPQ) Publish() http.Handler {
 		h.queue[topic] <- []string{string(msg)}
 		h.TxBytes += len([]byte(msg))
 
-		h.mux.Lock()
-		h.cond.Signal()
-		h.mux.Unlock()
-
 		w.WriteHeader(201)
 	})
 }
@@ -78,10 +67,6 @@ func (h *HTTPQ) Publish() http.Handler {
 func (h *HTTPQ) Consume() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		topic := r.URL.Path
-
-		h.mux.Lock()
-		h.cond.Wait()
-		h.mux.Unlock()
 
 		val, ok := h.queue[topic]
 
